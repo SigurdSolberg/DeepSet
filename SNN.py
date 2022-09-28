@@ -10,7 +10,7 @@ def rand(shape, low, high):
 
 class SNN(nn.Module):
 
-    def __init__(self, pd_rho, q1, dh_rho, q2, fc_network, n) -> None:
+    def __init__(self, pd_rho, q1, dh_rho, q2, fc_network, n):
         """
             Neural Network for classification of point clouds represented by is distributed homology,
             which again is represented by persistence diagrams.
@@ -55,19 +55,6 @@ class SNN(nn.Module):
         x = torch.stack(X)
         x = self.dh_rho(x) # --> takes m x n x q1, gives m x  q2
         x = self.fc(x)
-        return x
-
-    def __init__(self, model) -> None:
-         super().__init__()
-         self.model = model
-
-    def forward(self, x):
-        
-        preds = []
-        for sample in x:
-            for i in sample:
-                preds.append(self.model(i))
-        x = torch.stack(preds)
         return x
 
 class DeepSetOperator(nn.Module):
