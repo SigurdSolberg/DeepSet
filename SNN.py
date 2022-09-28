@@ -57,8 +57,6 @@ class SNN(nn.Module):
         x = self.fc(x)
         return x
 
-class SingleSNN(nn.Module):
-
     def __init__(self, model) -> None:
          super().__init__()
          self.model = model
