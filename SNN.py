@@ -1,17 +1,19 @@
 import functools
 from turtle import forward
+from unittest import result
+from numpy import iterable
 import torch.nn as nn
 import torch
 import time
+from typing import List
 
 def rand(shape, low, high):
     """Tensor of random numbers, uniformly distributed on [low, high]."""
     return torch.rand(shape) * (high - low) + low
 
-class SNN(nn.Module):
 
-    def __init__(self, pd_rho, q1, dh_rho, q2, fc_network, n):
-        """
+#Vector = List[List[torch.tensor]]
+"""
             Neural Network for classification of point clouds represented by is distributed homology,
             which again is represented by persistence diagrams.
 
@@ -24,42 +26,43 @@ class SNN(nn.Module):
             dh_q (int):             Dimension of the DH vectors.
             fc_network (nn.Module): Network for classifying DH vectors.
         """
+class DSSN(nn.Module):
 
-        super(SNN, self).__init__()
+    def __init__(self, pd_rho, dh_rho, fc_network, device):
 
-        # All parts of the network for vectorizing each persistence diagram
-        self.pd_rho = pd_rho
-        #self.pd_w = pd_w
-        self.q1 = q1
+        super(DSSN, self).__init__()
 
-        # All parts of the network for vectorizing the set of vectorized persistence diagram
-        self.dh_rho = dh_rho
-        #self.dh_w = dh_w
-        self.q2 = q2
-
+        self.pers_lay1 = pd_rho
+        self.pers_lay2 = dh_rho
         self.fc = fc_network
 
-        self.n = n
+    def forward(self:nn.Module, x:List[List[torch.Tensor]]) -> torch.Tensor: 
 
-    def forward(self, x): 
-        
-        #print('Input: ', x)
-        X = []
-        #X = torch.ones(size=(len(x), self.n, self.q1))# --> Creating a big m x n x q1 array, batch_size, num_pd, q1
-        for i, sample in enumerate(x):
-            dh = []
-            for j, pd in enumerate(sample):
-                dh.append(self.pd_rho(pd))
-            X.append(torch.stack(dh))
-
-        x = torch.stack(X)
-        x = self.dh_rho(x) # --> takes m x n x q1, gives m x  q2
+        x = torch.stack([torch.stack([self.pers_lay1(pd) for pd in sample]) for sample in x])
+        x = self.pers_lay2(x) # Batch_size x num_subsets x q1
         x = self.fc(x)
+
         return x
 
-class DeepSetOperator(nn.Module):
+@torch.jit.ignore
+class PersLay(nn.Module):
 
-    def __init__(self, operator:list, dim:int) -> None:
+    @torch.jit.ignore
+    def __init__(self, rho, phi, operator) -> None:
+        super(PersLay, self).__init__()
+
+        self.rho = rho      # Vectorization of elements, use DeepSet.Module
+        self.phi = phi      # Weighting of elements, use DeepSet.Module
+        self.op = operator
+
+    @torch.jit.ignore
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        # Takes batch_size x input_dimension
+        return self.op(self.rho(x)*self.phi(x))
+
+class DeepSetOperator(nn.Module):
+    @torch.jit.ignore
+    def __init__(self, operator:list) -> None:
         super().__init__()
 
         self.operator = set()
@@ -83,34 +86,40 @@ class DeepSetOperator(nn.Module):
                 self.operator.add(torch.median)
             elif op == 'var':
                 self.operator.add(torch.var)
+            elif op == 'sum':
+                self.operator.add(torch.sum)
 
-        lim = (dim)**-0.5 / 2
+        '''lim = (dim)**-0.5 / 2
         self.weight = torch.nn.Parameter(data=rand(dim, -lim, lim))
-        self.bias = torch.nn.Parameter(data=rand(dim, -lim, lim))
+        self.bias = torch.nn.Parameter(data=rand(dim, -lim, lim))'''
 
+    @torch.jit.ignore
     def forward(self, x):
         X = []
         for op in self.operator:
             if op == torch.median:
-                X.append(op(x * self.weight + self.bias, dim=-2)[0])
+                X.append(op(x, dim=-2)[0])
             elif type(op) == type(functools.partial(torch.topk)) and op.func == torch.topk:
-                X.extend([i for i in op(x * self.weight + self.bias, dim=-2).values])
+                X.extend([i for i in op(x, dim=-2).values])
             else:
-                X.append(op(x * self.weight + self.bias, dim=-2))
+                X.append(op(x, dim=-2))
 
-        X = torch.cat(X, dim = -1)
-        return X
+        if len(self.operator) > 0:
+            X = torch.cat(X, dim = -1)
+            return X
+        else:
+            return x
 
 class TransposeLayer(nn.Module):
-
+    @torch.jit.ignore
     def __init__(self) -> None:
         super().__init__()
-
+    @torch.jit.ignore
     def forward(self, x):
         return torch.swapaxes(x, -1, -2)
 
 class DeepSetLayer(nn.Module):
-
+    @torch.jit.ignore
     def __init__(self, input_dim:int, output_dim:int) -> None:
         super().__init__()
 
@@ -124,7 +133,7 @@ class DeepSetLayer(nn.Module):
         self.alpha = torch.nn.Parameter(data=rand((self.output_dim, self.input_dim), -lim, lim))
         self.beta = torch.nn.Parameter(data=rand((self.output_dim, self.input_dim), -lim, lim))
         self.gamma = torch.nn.Parameter(data=rand((self.output_dim), -lim, lim))
-
+    @torch.jit.ignore
     def forward(self, x):
         # x has shape (batch, in_blocks, n)
         x = torch.swapaxes(x, -1, -2)
